@@ -1,0 +1,708 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Three Tier AWS Architecture Using CloudFormation
+
+Parameters:
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+
+#################################################
+# VPC
+#################################################
+
+  ThreeTierVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+      Tags:
+        - Key: Name
+          Value: ThreeTier-VPC
+
+#################################################
+# INTERNET GATEWAY
+#################################################
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+
+    Properties:
+      VpcId: !Ref ThreeTierVPC
+      InternetGatewayId: !Ref InternetGateway
+
+#################################################
+# PUBLIC SUBNETS
+#################################################
+
+  PublicSubnet1:
+
+    Type: AWS::EC2::Subnet
+
+    Properties:
+
+      VpcId: !Ref ThreeTierVPC
+
+      AvailabilityZone: ap-south-1a
+
+      CidrBlock: 10.0.1.0/24
+
+      MapPublicIpOnLaunch: true
+
+      Tags:
+        - Key: Name
+          Value: Public-Subnet-1
+
+  PublicSubnet2:
+
+    Type: AWS::EC2::Subnet
+
+    Properties:
+
+      VpcId: !Ref ThreeTierVPC
+
+      AvailabilityZone: ap-south-1b
+
+      CidrBlock: 10.0.2.0/24
+
+      MapPublicIpOnLaunch: true
+
+      Tags:
+        - Key: Name
+          Value: Public-Subnet-2
+
+#################################################
+# PRIVATE SUBNETS
+#################################################
+
+  PrivateSubnet1:
+
+    Type: AWS::EC2::Subnet
+
+    Properties:
+
+      VpcId: !Ref ThreeTierVPC
+
+      AvailabilityZone: ap-south-1a
+
+      CidrBlock: 10.0.11.0/24
+
+      Tags:
+        - Key: Name
+          Value: Private-Subnet-1
+
+  PrivateSubnet2:
+
+    Type: AWS::EC2::Subnet
+
+    Properties:
+
+      VpcId: !Ref ThreeTierVPC
+
+      AvailabilityZone: ap-south-1b
+
+      CidrBlock: 10.0.12.0/24
+
+      Tags:
+        - Key: Name
+          Value: Private-Subnet-2
+
+#################################################
+# PUBLIC ROUTE TABLE
+#################################################
+
+  PublicRouteTable:
+
+    Type: AWS::EC2::RouteTable
+
+    Properties:
+
+      VpcId: !Ref ThreeTierVPC
+
+  PublicRoute:
+
+    Type: AWS::EC2::Route
+
+    DependsOn: AttachGateway
+
+    Properties:
+
+      RouteTableId: !Ref PublicRouteTable
+
+      DestinationCidrBlock: 0.0.0.0/0
+
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteAssociation:
+
+    Type: AWS::EC2::SubnetRouteTableAssociation
+
+    Properties:
+
+      RouteTableId: !Ref PublicRouteTable
+
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteAssociation:
+
+    Type: AWS::EC2::SubnetRouteTableAssociation
+
+    Properties:
+
+      RouteTableId: !Ref PublicRouteTable
+
+      SubnetId: !Ref PublicSubnet2
+
+#################################################
+# NAT GATEWAY
+#################################################
+
+  NatEIP:
+
+    Type: AWS::EC2::EIP
+
+    DependsOn: AttachGateway
+
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+
+    Type: AWS::EC2::NatGateway
+
+    Properties:
+
+      AllocationId: !GetAtt NatEIP.AllocationId
+
+      SubnetId: !Ref PublicSubnet1
+
+#################################################
+# PRIVATE ROUTE TABLE
+#################################################
+
+  PrivateRouteTable:
+
+    Type: AWS::EC2::RouteTable
+
+    Properties:
+
+      VpcId: !Ref ThreeTierVPC
+
+  PrivateRoute:
+
+    Type: AWS::EC2::Route
+
+    Properties:
+
+      RouteTableId: !Ref PrivateRouteTable
+
+      DestinationCidrBlock: 0.0.0.0/0
+
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnet1Association:
+
+    Type: AWS::EC2::SubnetRouteTableAssociation
+
+    Properties:
+
+      RouteTableId: !Ref PrivateRouteTable
+
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateSubnet2Association:
+
+    Type: AWS::EC2::SubnetRouteTableAssociation
+
+    Properties:
+
+      RouteTableId: !Ref PrivateRouteTable
+
+      SubnetId: !Ref PrivateSubnet2
+
+#################################################
+# SECURITY GROUPS
+#################################################
+
+  ALBSecurityGroup:
+
+    Type: AWS::EC2::SecurityGroup
+
+    Properties:
+
+      GroupDescription: ALB Security Group
+
+      VpcId: !Ref ThreeTierVPC
+
+      SecurityGroupIngress:
+
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  EC2SecurityGroup:
+
+    Type: AWS::EC2::SecurityGroup
+
+    Properties:
+
+      GroupDescription: EC2 Security Group
+
+      VpcId: !Ref ThreeTierVPC
+
+      SecurityGroupIngress:
+
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+
+  RDSSecurityGroup:
+
+    Type: AWS::EC2::SecurityGroup
+
+    Properties:
+
+      GroupDescription: RDS Security Group
+
+      VpcId: !Ref ThreeTierVPC
+
+      SecurityGroupIngress:
+
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+#################################################
+# IAM ROLE FOR EC2
+#################################################
+
+  EC2Role:
+    Type: AWS::IAM::Role
+
+    Properties:
+
+      AssumeRolePolicyDocument:
+
+        Version: '2012-10-17'
+
+        Statement:
+
+          - Effect: Allow
+
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+
+            Action:
+              - sts:AssumeRole
+
+      ManagedPolicyArns:
+
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  EC2InstanceProfile:
+
+    Type: AWS::IAM::InstanceProfile
+
+    Properties:
+
+      Roles:
+        - !Ref EC2Role
+
+#################################################
+# APPLICATION LOAD BALANCER
+#################################################
+
+  ApplicationLoadBalancer:
+
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+
+    Properties:
+
+      Name: ThreeTierALB
+
+      Scheme: internet-facing
+
+      Type: application
+
+      SecurityGroups:
+
+        - !Ref ALBSecurityGroup
+
+      Subnets:
+
+        - !Ref PublicSubnet1
+
+        - !Ref PublicSubnet2
+
+#################################################
+# TARGET GROUP
+#################################################
+
+  WebTargetGroup:
+
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+
+    Properties:
+
+      Name: WebTargetGroup
+
+      Port: 80
+
+      Protocol: HTTP
+
+      VpcId: !Ref ThreeTierVPC
+
+      TargetType: instance
+
+      HealthCheckPath: /
+
+      HealthCheckProtocol: HTTP
+
+      HealthCheckIntervalSeconds: 30
+
+#################################################
+# LISTENER
+#################################################
+
+  HTTPListener:
+
+    Type: AWS::ElasticLoadBalancingV2::Listener
+
+    Properties:
+
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+
+      Port: 80
+
+      Protocol: HTTP
+
+      DefaultActions:
+
+        - Type: forward
+
+          TargetGroupArn: !Ref WebTargetGroup
+
+#################################################
+# LAUNCH TEMPLATE
+#################################################
+
+  WebLaunchTemplate:
+
+    Type: AWS::EC2::LaunchTemplate
+
+    Properties:
+
+      LaunchTemplateName: ThreeTierLaunchTemplate
+
+      LaunchTemplateData:
+
+        ImageId: !Ref LatestAmiId
+
+        InstanceType: t3.micro
+
+        IamInstanceProfile:
+
+          Arn: !GetAtt EC2InstanceProfile.Arn
+
+        SecurityGroupIds:
+
+          - !Ref EC2SecurityGroup
+
+        UserData:
+
+          Fn::Base64: !Sub |
+
+            #!/bin/bash
+
+            dnf update -y
+
+            dnf install httpd -y
+
+            systemctl enable httpd
+
+            systemctl start httpd
+
+            TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" \
+            -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+
+            INSTANCE_ID=$(curl -H "X-aws-ec2-metadata-token:$TOKEN" \
+            http://169.254.169.254/latest/meta-data/instance-id)
+
+            cat > /var/www/html/index.html <<EOF
+            <html>
+            <head>
+            <title>Three Tier CloudFormation Project</title>
+            </head>
+            <body>
+            <h1>CloudFormation Three Tier Architecture</h1>
+            <h2>Instance ID: $INSTANCE_ID</h2>
+            <h3>Region: ap-south-1</h3>
+            </body>
+            </html>
+            EOF
+
+#################################################
+# AUTO SCALING GROUP
+#################################################
+
+  AutoScalingGroup:
+
+    Type: AWS::AutoScaling::AutoScalingGroup
+
+    Properties:
+
+      MinSize: '2'
+
+      MaxSize: '4'
+
+      DesiredCapacity: '2'
+
+      HealthCheckType: ELB
+
+      HealthCheckGracePeriod: 300
+
+      VPCZoneIdentifier:
+
+        - !Ref PublicSubnet1
+
+        - !Ref PublicSubnet2
+
+      TargetGroupARNs:
+
+        - !Ref WebTargetGroup
+
+      LaunchTemplate:
+
+        LaunchTemplateId: !Ref WebLaunchTemplate
+
+        Version: !GetAtt WebLaunchTemplate.LatestVersionNumber
+
+#################################################
+# SCALE OUT POLICY
+#################################################
+
+  ScaleOutPolicy:
+
+    Type: AWS::AutoScaling::ScalingPolicy
+
+    Properties:
+
+      AutoScalingGroupName: !Ref AutoScalingGroup
+
+      PolicyType: SimpleScaling
+
+      AdjustmentType: ChangeInCapacity
+
+      ScalingAdjustment: 1
+
+#################################################
+# SCALE IN POLICY
+#################################################
+
+  ScaleInPolicy:
+
+    Type: AWS::AutoScaling::ScalingPolicy
+
+    Properties:
+
+      AutoScalingGroupName: !Ref AutoScalingGroup
+
+      PolicyType: SimpleScaling
+
+      AdjustmentType: ChangeInCapacity
+
+      ScalingAdjustment: -1
+
+#################################################
+# DB SUBNET GROUP
+#################################################
+
+  DBSubnetGroup:
+
+    Type: AWS::RDS::DBSubnetGroup
+
+    Properties:
+
+      DBSubnetGroupDescription: Database Subnet Group
+
+      SubnetIds:
+
+        - !Ref PrivateSubnet1
+
+        - !Ref PrivateSubnet2
+
+#################################################
+# MYSQL RDS
+#################################################
+
+  MySQLDatabase:
+
+    Type: AWS::RDS::DBInstance
+
+    DeletionPolicy: Snapshot
+
+    Properties:
+
+      DBInstanceIdentifier: threetierdb
+
+      Engine: mysql
+
+      EngineVersion: "8.0"
+
+      DBInstanceClass: db.t4g.micro
+
+      AllocatedStorage: 20
+
+      StorageType: gp3
+
+      MultiAZ: false
+
+      PubliclyAccessible: false
+
+      BackupRetentionPeriod: 1
+
+      MasterUsername: admin
+
+      MasterUserPassword: Password123!
+
+      VPCSecurityGroups:
+
+        - !Ref RDSSecurityGroup
+
+      DBSubnetGroupName:
+
+        !Ref DBSubnetGroup
+
+#################################################
+# SNS TOPIC
+#################################################
+
+  SNSTopic:
+
+    Type: AWS::SNS::Topic
+
+    Properties:
+
+      DisplayName: ThreeTierAlerts
+
+      TopicName: ThreeTierAlerts
+
+#################################################
+# CLOUDWATCH CPU HIGH ALARM
+#################################################
+
+  CPUHighAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmDescription: CPU Utilization High
+
+      Namespace: AWS/EC2
+
+      MetricName: CPUUtilization
+
+      Statistic: Average
+
+      Period: 300
+
+      EvaluationPeriods: 2
+
+      Threshold: 70
+
+      ComparisonOperator: GreaterThanThreshold
+
+      AlarmActions:
+
+        - !Ref SNSTopic
+
+      Dimensions:
+
+        - Name: AutoScalingGroupName
+
+          Value: !Ref AutoScalingGroup
+
+#################################################
+# CLOUDWATCH CPU LOW ALARM
+#################################################
+
+  CPULowAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmDescription: CPU Utilization Low
+
+      Namespace: AWS/EC2
+
+      MetricName: CPUUtilization
+
+      Statistic: Average
+
+      Period: 300
+
+      EvaluationPeriods: 2
+
+      Threshold: 20
+
+      ComparisonOperator: LessThanThreshold
+
+      AlarmActions:
+
+        - !Ref SNSTopic
+
+      Dimensions:
+
+        - Name: AutoScalingGroupName
+
+          Value: !Ref AutoScalingGroup
+
+#################################################
+# OUTPUTS
+#################################################
+
+Outputs:
+
+  VPCId:
+
+    Description: VPC ID
+
+    Value: !Ref ThreeTierVPC
+
+  LoadBalancerDNS:
+
+    Description: ALB DNS Name
+
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+
+  DatabaseEndpoint:
+
+    Description: RDS Endpoint
+
+    Value: !GetAtt MySQLDatabase.Endpoint.Address
+
+  AutoScalingGroupName:
+
+    Description: Auto Scaling Group
+
+    Value: !Ref AutoScalingGroup
+
+  SNSTopicArn:
+
+    Description: SNS Topic ARN
+
+    Value: !Ref SNSTopic
